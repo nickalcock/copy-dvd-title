@@ -1,0 +1,568 @@
+#!/bin/zsh
+#
+# copy-dvd-title --- a DVD and BluRay ripping wrapper around HandbrakeCLI and optionally MakeMKV, vapoursynth, and VLC
+#
+
+TMPDIR=/usr/local/tmp/encoding/job$RANDOM
+
+set -o nullglob
+
+while [[ -e $TMPDIR ]]; do
+    TMPDIR=/usr/local/tmp/encoding/job$RANDOM
+done
+
+chrt -b -p 0 $$
+echo 15 > /proc/$$/autogroup
+
+mkdir -p $TMPDIR
+ulimit -d unlimited
+ulimit -c 0
+
+# Defaults.
+
+DVD_OUTDIR=.
+DVD_SUBTITLES=
+DVD_SUBTITLES_FORCED=
+DVD_QUALITY=21
+DVD_CHAPTER=
+DVD_ANGLE=
+DVD_AUDIO_TRACKS=1
+DVD_AUDIO_NAMES=
+DVD_SEASONTITLE=
+DVD_DATE=
+DVD_GENRE="Science Fiction"
+DVD_DRIVE=/dev/bluray
+DVD_MOUNTPOINT=/mnt/bluray
+DVD_HDD=
+DVD_MKVDIR=
+DVD_MAKEMKV=
+DVD_MAKEMKV_PROFILE=
+DVD_PRESET=veryslow
+DVD_TUNE=film
+DVD_CROP=
+DVD_SAVE_TEMPS=
+DVD_STARTSKIP=
+DVD_STOPSKIP=
+DVD_CATALOGUE=
+DVD_DEINTERLACE="--no-decomb --no-comb-detect"
+DVD_DENOISE=
+DVD_NLDENOISE=
+DVD_DETELECINE=
+DVD_SYNTH=
+DVD_SYNTHDIR=
+DVD_SYNTH_TIMESTAMPS=t
+DVD_AUDIO_CODEC=copy
+DVD_SYNTH_GRAB=makemkv
+DVD_POSTPROC=
+DVD_DISPLAY_WIDTH=
+BLURAY_MINLENGTH=120
+TRACK_OFFSET=0
+WRITE_TRACK=0
+ENCDRIVE=
+
+typeset -A pregrabbed
+
+# Split an option at its equals sign, and return the part after the equals.
+parse_arg()
+{
+    printf "%s" "$@" | cut -d= -f2-
+}
+
+# Parse a single option, derived from some source (command line or file).
+# All variables manipulated in these options must begin with 'DVD_'.
+parse_single()
+{
+    case $1 in
+        --catalogue=*) DVD_CATALOGUE="$(parse_arg $1)";
+            [[ ! -f $DVD_CATALOGUE ]] && { echo "Catalogue file $DVD_CATALOGUE not found." >&2; exit 1; };;
+        --output=*) DVD_OUTDIR="$(parse_arg $1)"
+            [[ ! -d $DVD_OUTDIR ]] && { echo "Output directory $DVD_OUTDIR not found." >&2; exit 1; };;
+        --subtitles=*) DVD_SUBTITLES="$(parse_arg $1)";;
+        --force-subtitles=*) DVD_SUBTITLES_FORCED="$(parse_arg $1)";;
+        --default-subtitle=*) DVD_SUBTITLES_DEFAULT="$(parse_arg $1)";;
+        --seasontitle=*) DVD_SEASONTITLE="$(parse_arg $1)";;
+        --audio=*) DVD_AUDIO_TRACKS="$(parse_arg $1)";;
+        --audio-codec=*) DVD_AUDIO_CODEC="$(parse_arg $1)";;
+        --chapter=*) DVD_CHAPTER="$(parse_arg $1)";;
+        --angle=*) DVD_ANGLE="$(parse_arg $1)";;
+        --date=*) DVD_DATE="$(parse_arg $1)";;
+        --genre=*) DVD_GENRE="$(parse_arg $1)";;
+        --vob=*) DVD_VOB="$(parse_arg $1)";;
+        --deinterlace) DVD_DEINTERLACE="--deinterlace=slower";;
+        --decomb) DVD_DEINTERLACE="--decomb --comb-detect";;
+        --deinterlace=*) DVD_DEINTERLACE="--deinterlace=$(parse_arg $1)";;
+        --decomb=*) DVD_DEINTERLACE="--decomb=$(parse_arg $1) --comb-detect";;
+        --always-decomb) DVD_DEINTERLACE="--decomb";;
+        --always-decomb=*) DVD_DEINTERLACE="--decomb=$(parse_arg $1)";;
+	--no-deinterlace|--no-decomb) DVD_DEINTERLACE="--no-decomb --no-comb-detect";;
+        --denoise=*) DVD_DENOISE="$(parse_arg $1)";;
+        --nldenoise=*) DVD_NLDENOISE="$(parse_arg $1)";;
+        --detelecine) DVD_DETELECINE="$(parse_arg $1)";;
+        --no-detelecine) DVD_DETELECINE=;;
+        --quality=*) DVD_QUALITY="$(parse_arg $1)";;
+        --preset=*) DVD_PRESET="$(parse_arg $1)";;
+        --media=*) DVD_TUNE="$(parse_arg $1)";;
+        --crop=*) DVD_CROP="$(parse_arg $1)";;
+        --skip=*) DVD_STARTSKIP="$(parse_arg $1)";;
+        --stop=*) DVD_STOPSKIP="$(parse_arg $1)";;
+        --bluray-minlength=*) BLURAY_MINLENGTH="$(parse_arg $1)";;
+        --drive=*) DVD_DRIVE="$(parse_arg $1)";;
+        --mountpoint=*) DVD_MOUNTPOINT="$(parse_arg $1)";;
+        --hdd) DVD_HDD="//tmp//";;
+        --hdd=*) DVD_HDD="$(parse_arg $1)";;
+        --synth=*) DVD_SYNTH="$(parse_arg $1)";;
+        --no-synth) DVD_SYNTH=;;
+        --synthdir=*) DVD_SYNTHDIR="$(parse_arg $1)";;
+        --display-width=*) DVD_DISPLAY_WIDTH="$(parse_arg $1)";;
+        --mkvdir=*) DVD_MKVDIR="$(parse_arg $1)";;
+        --no-mkvdir) DVD_MKVDIR=;;
+        --makemkv) DVD_MAKEMKV=t;;
+        --no-makemkv) DVD_MAKEMKV=;;
+        --makemkv-profile=*) DVD_MAKEMKV_PROFILE="$(parse_arg $1)";;
+        --synth-grab=*) DVD_SYNTH_GRAB="$(parse_arg $1)";;
+        --postproc=*) DVD_POSTPROC="$(parse_arg $1)";;
+        --save-temps) DVD_SAVE_TEMPS=t;;
+        --wipe-pregrabbed) DVD_WIPE_PREGRABBED=t;;
+        --no-wipe-pregrabbed) DVD_WIPE_PREGRABBED=;;
+        *) echo "Unknown parameter $1";;
+    esac
+}
+
+# Scan for global settings in this directory and all above.
+# Deeper directories take precedence over higher ones, and
+# the command line takes precedence over both: options specified
+# in the catalogue take precedence over the command line.
+
+global_settings()
+{
+    local oldpwd="$(pwd)"
+    if [[ $1 == 1 ]]; then
+        pushd ..
+        [[ "$oldpwd" == "$(pwd)" ]] && { popd; return; }
+    fi
+
+    global_settings 1;
+
+    if [[ -f dvd-title.conf ]]; then
+        cat dvd-title.conf | while read -r OPTION; do
+            parse_single "$OPTION"
+        done
+    fi
+    popd 2>/dev/null
+}
+
+global_settings
+
+# Parse options from the command line.  Some are mandatory there.
+
+while [[ $# -gt 0 ]]; do
+    parse_single "$1"
+    shift;
+done
+
+if [[ -z $DVD_OUTDIR ]]; then
+    echo "Output directory must be specified." >&2
+    exit 1
+fi
+
+if [[ -z $DVD_CATALOGUE ]]; then
+    echo "Catalogue file must be specified." >&2
+    exit 1
+fi
+
+exec 7<$DVD_CATALOGUE
+
+# Pull in the global options (all lins up to the line consisting of only --).
+while read -ru 7 OPTION; do
+    [[ $OPTION == '--' ]] && break;
+
+    parse_single "$OPTION"
+done
+
+# Derive an MKV drive number, given a symlink to a drive.
+function makemkvdrive()
+{
+    typeset -A mkvdrives
+    mkvdrives=($(makemkvcon -r info | grep '^DRV' | sed 's,^DRV:,,; s,",,g' |\
+                        awk -F, '{ if ($7 != "") { print $7 " " $1;} }'))
+    if [[ -z $mkvdrives[$1] ]]; then
+        mkvdrives[$1]=$mkvdrives[$(readlink -f $1)]
+    fi
+    echo $mkvdrives[$1]
+}
+
+# This is tricky. VLC needs to run with the menus enabled to be able to do IFO
+# scanning and handle Arccos-corrupted discs: but if we do that, it never quits.
+# So keep an eye on the output file and kill VLC when it stops growing for a
+# while.  (We get no useful exit code, but then the whole *point* of this is to
+# disregard read errors and just keep going.)
+vlcize()
+{
+    local vlc_uri=$1
+    local track=$2
+    local output=$3
+    zmodload zsh/stat
+    cvlc $vlc_uri"#"$track --sout '#transcode{scodec=dvbs}:std{access=file,mux=ps,dst='$output'}' --sout-all &
+    local vlc_pid=$!
+    trap "kill $vlc_pid" EXIT QUIT
+    sleep 1
+    while [[ ! -s $output ]] && ps -p $vlc_pid >/dev/null; do
+        sleep 1
+    done
+    [[ ! -f $output ]] && return 1
+    prevsize=0
+    typeset -A statout
+    zstat -H statout $output
+
+    while [[ $statout[size] != $prevsize ]]; do
+        sleep 10
+        prevsize=$statout[size]
+        zstat -H statout $output
+    done
+    sleep 10 # let it finish writing before killing
+}
+
+if [[ -z $DVD_SYNTHDIR ]]; then
+    synthdir=$TMPDIR/synth.$$
+else
+    synthdir=$DVD_SYNTHDIR/synth.$$
+fi
+
+# Suck in the DVD or BluRay, if wanted, or otherwise pick the encoding source.
+
+if [[ -n $DVD_HDD ]]; then
+    if [[ $DVD_HDD = //tmp// ]]; then
+        DVD_HDD=$TMPDIR/hdd
+    fi
+
+    mkdir $DVD_HDD
+    if ! lsdvd $DVD_DRIVE >/dev/null 2>&1; then
+        makemkvcon backup --minlength=$BLURAY_MINLENGTH --decrypt ${DVD_MAKEMKV_PROFILE:+--profile=$DVD_MAKEMKV_PROFILE} --progress=-stdout disc:$(makemkvdrive $DVD_DRIVE) $DVD_HDD
+        ENCDRIVE=$DVD_HDD
+    else
+        mount $DVD_MOUNTPOINT
+        vobcopy --verbose --fast 64 --input-dir $DVD_MOUNTPOINT --output-dir $DVD_HDD -t .out --mirror
+        umount $DVD_MOUNTPOINT
+        mv $DVD_HDD/.out/* $DVD_HDD
+        rmdir $DVD_HDD/.out
+        ENCDRIVE=$DVD_HDD/VIDEO_TS
+    fi
+elif [[ -n $DVD_MKVDIR ]]; then
+    test -d $DVD_MKVDIR || { echo "No MKV directory." >&2; exit 1; }
+elif [[ -n $DVD_VOB ]]; then
+    ENCDRIVE=$DVD_VOB
+elif [[ $DVD_DRIVE =~ ^/dev ]]; then
+    if ! lsdvd $DVD_DRIVE >/dev/null 2>&1 &&
+       ! makemkvcon disc:$(makemkvdrive $DVD_DRIVE) ${DVD_MAKEMKV_PROFILE:+--profile=$DVD_MAKEMKV_PROFILE} 2>/dev/null | grep -qv 'Failed to open'; then
+        echo "No DVD." >&2;
+        exit 1;
+    fi
+    ENCDRIVE=$DVD_DRIVE
+else
+    mount $DVD_DRIVE 2>/dev/null || mountpoint -q $DVD_DRIVE || { echo "No DVD." >&2; exit 1; }
+    trap '{ umount $DVD_DRIVE; }' QUIT INT
+    ENCDRIVE=$DVD_DRIVE
+fi
+
+# Work over the catalogue and pull in every item described there.
+while read -ru 7 TRACK TITLE; do
+
+    [[ -z "$TRACK" ]] && continue
+
+    if [[ $TRACK = "offset" ]]; then
+        TRACK_OFFSET=$TITLE
+        WRITE_TRACK=0
+        continue
+    fi
+
+    # Alternate encoding for DVD chapters.
+    DVD_CHAPTER="$(echo $TRACK | cut -d: -sf2-)"
+    if [[ -n $DVD_CHAPTER ]]; then
+        TRACK="$(echo $TRACK | cut -d: -f1)"
+    fi
+
+    function
+    {
+        # Localize all the DVD variables, and set options, which follow ::.
+
+        local DVD_OUTDIR=$DVD_OUTDIR DVD_SUBTITLES=$DVD_SUBTITLES
+        local DVD_SUBTITLES_FORCED=$DVD_SUBTITLES_FORCED
+        local DVD_SUBTITLES_DEFAULT=$DVD_SUBTITLES_DEFAULT
+        local DVD_QUALITY=$DVD_QUALITY DVD_CHAPTER=$DVD_CHAPTER
+        local DVD_ANGLE=$DVD_ANGLE DVD_AUDIO_TRACKS=$DVD_AUDIO_TRACKS
+        local DVD_AUDIO_CODEC=$DVD_AUDIO_CODEC
+        local DVD_SEASONTITLE=$DVD_SEASONTITLE DVD_DATE=$DVD_DATE
+        local DVD_GENRE=$DVD_GENRE DVD_DRIVE=$DVD_DRIVE DVD_HDD=$DVD_HDD
+        local DVD_MOUNTPOINT=$DVD_MOUNTPOINT
+        local DVD_PRESET=$DVD_PRESET DVD_TUNE=$DVD_TUNE DVD_CROP=$DVD_CROP
+        local DVD_SAVE_TEMPS=$DVD_SAVE_TEMPS DVD_STARTSKIP=$DVD_STARTSKIP
+        local DVD_STOPSKIP=$DVD_STOPSKIP BLURAY_MINLENGTH=$BLURAY_MINLENGTH
+        local DVD_CATALOGUE=$DVD_CATALOGUE DVD_DEINTERLACE=$DVD_DEINTERLACE
+        local DVD_DENOISE=$DVD_DENOISE DVD_NLDENOISE=$DVD_NLDENOISE
+        local DVD_DETELECINE=$DVD_DETELECINE DVD_SYNTH=$DVD_SYNTH
+        local DVD_DISPLAY_WIDTH=$DVD_DISPLAY_WIDTH DVD_SYNTH_GRAB=$DVD_SYNTH_GRAB
+        local DVD_MKVDIR=$DVD_MKVDIR DVD_MAKEMKV=$DVD_MAKEMKV
+        local DVD_MAKEMKV_PROFILE=$DVD_MAKEMKV_PROFILE
+        local DVD_POSTPROC=$DVD_POSTPROC DVD_WIPE_PREGRABBED=$DVD_WIPE_PREGRABBED
+
+        if [[ $TITLE =~ :: ]]; then
+            local TITLE_OPTIONS="$(echo $TITLE | sed 's,^.*::,,')"
+            TITLE="$(echo $TITLE | sed 's, *::.*$,,')"
+
+            set -- ${=TITLE_OPTIONS}
+            while [[ $# -gt 0 ]]; do
+                parse_single "$(echo $1 | sed 's,^ *,,; s, *$,,')"
+                shift;
+            done
+        fi
+
+        # Handle (rare, obscure) --dvd-drive overrides
+        if [[ $DVD_DRIVE != $ENCDRIVE ]]; then
+            local ENCDRIVE=$DVD_DRIVE
+        fi
+    
+        if [[ -n $DVD_WIPE_PREGRABBED ]]; then
+            for name in "$pregrabbed[@]"; do
+                rm $name
+            done
+            pregrabbed=()
+        fi
+        
+        local PREGRABBED_KEY="$TRACK ${DVD_SYNTH:-}"
+
+        local ENC_TITLE=
+        local ENC_FILE=
+        local rm_enc_file=
+        local i=0
+        if [[ -n $pregrabbed[$PREGRABBED_KEY] ]]; then
+            ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
+            unset DVD_SYNTH
+        elif [[ -n $DVD_MKVDIR ]]; then
+            for subtrack in $(echo $TRACK | tr '+' ' '); do
+                if [[ $subtrack -lt 100 ]]; then
+                    ENC_FILE="$ENC_FILE${ENC_FILE:+ }$(echo $DVD_MKVDIR/*_t${(l:2::0:)subtrack}.mkv)"
+                else
+                    ENC_FILE="$ENC_FILE${ENC_FILE:+ }$(echo $DVD_MKVDIR/*_t${subtrack}.mkv)"
+                fi
+                i=$(($i+1))
+            done
+            if [[ $i -gt 1 ]]; then
+                TRACK="$(echo $TRACK | cut -d+ -f1)"
+                mkvmerge -o $TMPDIR/$TRACK.combined.mkv '[' ${=ENC_FILE} ']'
+                ENC_FILE=$TMPDIR/$TRACK.combined.mkv
+            fi
+        elif [[ -n $DVD_MAKEMKV ]]; then
+            ENC_FILE=$TMPDIR/$TRACK.orig.mkv
+            mkvsource="disc:$(makemkvdrive $DVD_DRIVE)"
+            mkdir -p $TMPDIR/.out $TMPDIR/.out.ordered
+            for subtrack in $(echo $TRACK | tr '+' ' '); do
+                makemkvcon mkv --minlength=$BLURAY_MINLENGTH ${DVD_MAKEMKV_PROFILE:+--profile=$DVD_MAKEMKV_PROFILE} $mkvsource $subtrack $TMPDIR/.out
+                mv $TMPDIR/.out/*.mkv $TMPDIR/.out.ordered/$i.mkv
+                i=$(($i+1))
+            done
+            if [[ $subtrack != $TRACK ]]; then
+                TRACK="$(echo $TRACK | cut -d+ -f1)"
+                mkvmerge -o $ENC_FILE '[' $TMPDIR/.out.ordered/* ']'
+                rm -f $TMPDIR/.out.ordered/*
+            else
+                mv $TMPDIR/.out.ordered/*.mkv $ENC_FILE
+            fi
+            rmdir $TMPDIR/.out $TMPDIR/.out.ordered
+            if [[ -z $DVD_SYNTH ]]; then
+                local target=makemkv.$$
+                mkdir -p $TMPDIR/$target
+                mv $ENC_FILE $TMPDIR/$target
+                pregrabbed[$PREGRABBED_KEY]=$TMPDIR/$target/$TRACK.orig.mkv
+                ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
+            else
+                rm_enc_file=t
+            fi
+        else
+            ENC_TITLE=$TRACK
+        fi
+
+        MUX_AUDIO=
+
+        local anamorphic
+        if [[ -z $DVD_DISPLAY_WIDTH ]]; then
+            anamorphic=--loose-anamorphic
+        else
+            anamorphic=--custom-anamorphic
+        fi
+
+        # Transformation with vapoursynth.
+        #
+        # This process produces an insane amount of data, so we sync after each
+        # major data-producing stage, to prevent dirty-data flushes during the
+        # next operation (which usually reads them all in again) from slowing
+        # the process down drastically via mega-seeks.
+        if [[ -n $DVD_SYNTH ]]; then
+            # Extract the track and demux it.
+            local unmux=$TMPDIR/$TRACK.vid
+            local rm_encsynth_file=
+            mkv_delay=0
+            if [[ -n $ENC_TITLE ]]; then
+                if [[ $DVD_SYNTH_GRAB = "handbrake" ]]; then # Use Handbrake for grabbing, in lossless x264 mode.
+                    # Nearly all options are disabled, except that if wipe_pregrabbed is on, we pull in only
+                    # the desired chapter, and disable chapter walking in Handbrake later.
+                    local synth_chapter=
+                    if [[ -n $DVD_WIPE_PREGRABBED ]]; then
+                        synth_chapter=$DVD_CHAPTER
+                    fi
+                    if ! HandBrakeCLI --preset Legacy/Normal --encoder-profile auto ${=ENC_TITLE:+--title $TRACK} ${=synth_chapter:+--chapter $synth_chapter} --format av_mkv --markers --encoder x264 --encoder-level 4.2 --encoder-preset ultrafast --encoder-tune $DVD_TUNE --quality 0 --crop 0:0:0:0 --all-audio --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} --native-language eng --native-dub --all-subtitles --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.orig.mkv; then
+                        echo "Encoding error, exitcode $?" >&2
+                        echo "Files left in $TMPDIR." >&2
+                        exit 1
+                    fi
+                    if [[ -n $DVD_WIPE_PREGRABBED ]]; then
+                        DVD_CHAPTER=
+                    fi
+                    unset unmux
+                elif [[ $DVD_SYNTH_GRAB = "vlc" ]]; then
+                    if [[ -n $DVD_HDD ]] || [[ -n $DVD_VOB ]]; then
+                        vlc_uri="dvd://"
+                    else
+                        vlc_uri="dvd://$ENCDRIVE"
+                    fi
+                    vlcize $vlc_uri $ENC_TITLE $TMPDIR/$TRACK.orig.mpg || exit 1
+                    sync
+                    mkvmerge -o $TMPDIR/$TRACK.orig.mkv $TMPDIR/$TRACK.orig.mpg
+                    mkv_delay=500 # genuine guess
+                    rm -f $TMPDIR/$TRACK.orig.mpg
+                else # The default for synth-grabbing is makemkv.
+                    if [[ -n $DVD_HDD ]] || [[ -n $DVD_VOB ]]; then
+                        mkvsource="file:$ENCDRIVE"
+                    else
+                        mkvsource="disc:$(makemkvdrive $ENCDRIVE)"
+                    fi
+                    mkdir $TMPDIR/.out
+                    makemkvcon mkv --minlength=$BLURAY_MINLENGTH ${DVD_MAKEMKV_PROFILE:+--profile=$DVD_MAKEMKV_PROFILE} $mkvsource $ENC_TITLE $TMPDIR/.out
+                    mv $TMPDIR/.out/*.mkv $TMPDIR/$TRACK.orig.mkv
+                    rmdir $TMPDIR/.out
+                fi
+                ENC_FILE=$TMPDIR/$TRACK.orig.mkv
+                ENC_TITLE=
+                rm_encsynth_file=t
+            fi
+
+            # --synth=none can be used to ensure track-number consistency when some
+            # tracks use --synth and some do not, by forcing all of them to go through
+            # makemkv.
+            if [[ $DVD_SYNTH = "none" ]]; then
+                if [[ -n $DVD_WIPE_PREGRABBED ]]; then
+                    rm_enc_file=t
+                else
+                    mkdir -p $synthdir
+                    mv $ENC_FILE $synthdir/$TRACK.mkv
+                    pregrabbed[$PREGRABBED_KEY]=$synthdir/$TRACK.mkv
+                    ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
+                    rm_enc_file=
+                fi
+            else
+                # Extract the video track, run through vapoursynth, and immediately
+                # recompress with lossless x264 in fastest mode, before recombining
+                # again. (This reduces the disk space consumption hugely. It actually
+                # saves time because the disk write volume is reduced so much.)
+                # Additionally, extract the chapter metadata in a form FFmpeg can
+                # understand, then mux it back into the output stream and ensure that
+                # all chapters have a keyframe at their start, for per-chapter
+                # transcoding.  We can also edit the chapter information to adapt to
+                # situations where the chapters are skewed or otherwise invalid: in
+                # this case, we must mux in the edited chapters, not the originals.
+                sync
+                ffmpeg -loglevel fatal -i $ENC_FILE -f ffmetadata $TMPDIR/$TRACK.ffmetadata
+                if [[ -n $unmux ]]; then
+                    ln $ENC_FILE $unmux
+                else
+                    unmux=$ENC_FILE
+                fi
+                local SAR="$(ffprobe -show_streams $unmux 2>&1 | grep sample_aspect_ratio | cut -d= -f2- | tr : /)"
+                PYTHONPATH=~/libexec/vapoursynth vspipe $DVD_SYNTH --arg source=$unmux --timecodes $TMPDIR/$TRACK-timecodes.txt --y4m - | \
+                    ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
+                mkdir -p $synthdir
+                sync
+                mkvmerge -o $synthdir/$TRACK.mkv --no-chapters --timestamps 0:$TMPDIR/$TRACK-timecodes.txt $TMPDIR/$TRACK-unmuxed.mkv \
+                         $(if [[ $mkv_delay -ne 0 ]]; then \
+                               for trackid in $(mkvmerge --identify $ENC_FILE | grep audio | awk '{ print $3;}' | tr -d :); do \
+                                   echo -y $trackid:$mkv_delay; \
+                               done; \
+                           fi) --no-video $ENC_FILE
+                # Clean up: these things are huge!
+                rm -f $TMPDIR/$TRACK-unmuxed.mkv $TMPDIR/$track-timecodes.txt
+                [[ -n $rm_encsynth_file ]] && rm -f $ENC_FILE $unmux
+                pregrabbed[$PREGRABBED_KEY]=$synthdir/$TRACK.mkv
+                ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
+                rm_enc_file=
+            fi
+        fi
+
+        # If this is a file, not a DVD or BluRay, we have to map the chapters
+        # across ourselves, including fixing up their timings if a startskip
+        # was specified. XXX perhaps use mkvmerge chapter timing adjustment?
+        CHAPTERS=
+        if [[ -n $ENC_FILE ]]; then
+            CHAPTERS=$TMPDIR/$TRACK-chapters.xml
+            mkvextract $ENC_FILE chapters $CHAPTERS.unadjusted
+    	    if [[ -s $CHAPTERS.unadjusted ]]; then
+                ~/libexec/copy-dvd-mangle-chapters ${DVD_STARTSKIP:-0} < $CHAPTERS.unadjusted > $CHAPTERS
+            else
+                CHAPTERS=
+            fi
+        fi
+
+        # Encode!
+        if ! HandBrakeCLI --preset "Legacy/High Profile" ${=ENC_TITLE:+--title $TRACK} ${=DVD_CHAPTER:+--chapter $DVD_CHAPTER} ${=DVD_ANGLE:+--angle $DVD_ANGLE} ${=DVD_STARTSKIP:+--start-at seconds:$DVD_STARTSKIP} ${=DVD_STOPSKIP:+--stop-at seconds:$DVD_STOPSKIP} --format av_mkv --markers --no-align-av --encoder x264 --encoder-level 4.2 --encoder-preset $DVD_PRESET --encoder-tune $DVD_TUNE ${=DVD_CROP:+--crop $DVD_CROP} --previews 50 --quality $DVD_QUALITY ${=DVD_AUDIO_TRACKS:+--audio $DVD_AUDIO_TRACKS} --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} ${=DVD_DEINTERLACE} ${=DVD_DENOISE:+--hqdn3d=$DVD_DENOISE} ${=DVD_NLDENOISE:+--nlmeans=$DVD_NLDENOISE --nlmeans-tune=$DVD_TUNE} $DVD_DETELECINE --native-language eng --native-dub ${=DVD_SUBTITLES:+--subtitle $DVD_SUBTITLES} ${=DVD_SUBTITLES_FORCED:+--subtitle-forced=$DVD_SUBTITLES_FORCED} ${=DVD_SUBTITLES_DEFAULT:+--subtitle-default=$DVD_SUBTITLES_DEFAULT} --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.mkv; then
+            echo "Encoding error, exitcode $?" >&2
+            echo "Files left in $TMPDIR." >&2
+            exit 1
+        fi
+        [[ -n $rm_enc_file ]] && rm -f $ENC_FILE
+        # Merge in the season title, release date, and genre into the final Matroska file.
+
+        cat > $TMPDIR/mkvtags.xml <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!DOCTYPE Tags SYSTEM "matroskatags.dtd">
+
+<Tags>
+  <Tag>
+    <Simple>
+      <Name>Source</Name>
+      <String>DVD</String>
+   </Simple>
+    <Simple>
+      <Name>Title</Name>
+      <String>$TITLE</String>
+    </Simple>
+    ${DVD_SEASONTITLE:+<Simple>
+      <Name>Season Title</Name>
+      <String>$DVD_SEASONTITLE</String>
+    </Simple>}${DVD_DATE:+
+    <Simple>
+      <Name>Release Date</Name>
+      <String>${DVD_DATE}</String>
+    </Simple>}
+    <Simple>
+      <Name>Genre</Name>
+      <String>$DVD_GENRE</String>
+    </Simple>
+  </Tag>
+</Tags>
+EOF
+
+        WRITE_TRACK=$(($WRITE_TRACK+1))
+        finalname="$DVD_OUTDIR/$(printf %02i $(($WRITE_TRACK+$TRACK_OFFSET)))-$(echo "$TITLE" | tr ' ' '-').mkv"
+        /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS --no-chapters} $TMPDIR/$TRACK.mkv -o $finalname
+
+        # Run any optional postprocessing requested.
+        [[ -n $DVD_POSTPROC ]] && [[ -x $DVD_POSTPROC ]] && $DVD_POSTPROC $finalname
+        
+        [[ -z $DVD_SAVE_TEMPS ]] && rm -f $TMPDIR/$TRACK*
+    }
+
+done
+
+if [[ -z $DVD_SAVE_TEMPS ]]; then
+    rm -rf $TMPDIR
+    [[ -d $synthdir ]] && rm -rf $synthdir
+fi
