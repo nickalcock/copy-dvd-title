@@ -121,6 +121,7 @@ parse_single()
         --makemkv-profile=*) DVD_MAKEMKV_PROFILE="$(parse_arg $1)";;
         --synth-grab=*) DVD_SYNTH_GRAB="$(parse_arg $1)";;
         --postproc=*) DVD_POSTPROC="$(parse_arg $1)";;
+        --postproc-args=*) DVD_POSTPROC_ARGS="$(parse_arg $1 | tr ',' ' ')";;
         --save-temps) DVD_SAVE_TEMPS=t;;
         --wipe-pregrabbed) DVD_WIPE_PREGRABBED=t;;
         --no-wipe-pregrabbed) DVD_WIPE_PREGRABBED=;;
@@ -142,7 +143,6 @@ global_settings()
     fi
 
     global_settings 1;
-
     if [[ -f dvd-title.conf ]]; then
         cat dvd-title.conf | while read -r OPTION; do
             parse_single "$OPTION"
@@ -303,7 +303,8 @@ while read -ru 7 TRACK TITLE; do
         local DVD_DISPLAY_WIDTH=$DVD_DISPLAY_WIDTH DVD_SYNTH_GRAB=$DVD_SYNTH_GRAB
         local DVD_MKVDIR=$DVD_MKVDIR DVD_MAKEMKV=$DVD_MAKEMKV
         local DVD_MAKEMKV_PROFILE=$DVD_MAKEMKV_PROFILE
-        local DVD_POSTPROC=$DVD_POSTPROC DVD_WIPE_PREGRABBED=$DVD_WIPE_PREGRABBED
+        local DVD_POSTPROC=$DVD_POSTPROC DVD_POSTPROC_ARGS="$DVD_POSTPROC_ARGS"
+        local DVD_WIPE_PREGRABBED=$DVD_WIPE_PREGRABBED
 
         if [[ $TITLE =~ :: ]]; then
             local TITLE_OPTIONS="$(echo $TITLE | sed 's,^.*::,,')"
@@ -516,7 +517,6 @@ while read -ru 7 TRACK TITLE; do
             echo "Files left in $TMPDIR." >&2
             exit 1
         fi
-        [[ -n $rm_enc_file ]] && rm -f $ENC_FILE
         # Merge in the season title, release date, and genre into the final Matroska file.
 
         cat > $TMPDIR/mkvtags.xml <<EOF
@@ -555,9 +555,10 @@ EOF
         /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS --no-chapters} $TMPDIR/$TRACK.mkv -o $finalname
 
         # Run any optional postprocessing requested.
-        [[ -n $DVD_POSTPROC ]] && [[ -x $DVD_POSTPROC ]] && $DVD_POSTPROC $finalname
-        
+        [[ -n $DVD_POSTPROC ]] && [[ -x $DVD_POSTPROC ]] && $DVD_POSTPROC "$finalname" "$ENC_FILE" ${=DVD_POSTPROC_ARGS}
+
         [[ -z $DVD_SAVE_TEMPS ]] && rm -f $TMPDIR/$TRACK*
+        [[ -n $rm_enc_file ]] && rm -f $ENC_FILE
     }
 
 done
