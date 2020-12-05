@@ -381,6 +381,7 @@ while read -ru 7 TRACK TITLE; do
         else
             ENC_TITLE=$TRACK
         fi
+        ORIG_MKV_FILE="$ENC_FILE"
 
         MUX_AUDIO=
 
@@ -554,8 +555,9 @@ EOF
         finalname="$DVD_OUTDIR/$(printf %02i $(($WRITE_TRACK+$TRACK_OFFSET)))-$(echo "$TITLE" | tr ' ' '-').mkv"
         /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS --no-chapters} $TMPDIR/$TRACK.mkv -o $finalname
 
-        # Run any optional postprocessing requested.
-        [[ -n $DVD_POSTPROC ]] && [[ -x $DVD_POSTPROC ]] && $DVD_POSTPROC "$finalname" "$ENC_FILE" ${=DVD_POSTPROC_ARGS}
+        # Run any optional postprocessing requested, passing in the original file
+        # (if file-sourced) and any further args.
+        [[ -n $DVD_POSTPROC ]] && [[ -x $DVD_POSTPROC ]] && $DVD_POSTPROC "$finalname" "$ORIG_MKV_FILE" ${=DVD_POSTPROC_ARGS}
 
         [[ -z $DVD_SAVE_TEMPS ]] && rm -f $TMPDIR/$TRACK*
         [[ -n $rm_enc_file ]] && rm -f $ENC_FILE
