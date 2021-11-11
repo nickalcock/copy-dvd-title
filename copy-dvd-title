@@ -568,7 +568,9 @@ while read -ru 7 TRACK TITLE; do
                 sync
                 ffmpeg -loglevel fatal -i $ENC_FILE -f ffmetadata $TMPDIR/$TRACK.ffmetadata
                 if [[ -n $unmux ]]; then
-                    ln $ENC_FILE $unmux
+                    if ! ln $ENC_FILE $unmux; then
+                        cp $ENC_FILE $unmux
+                    fi
                 else
                     unmux=$ENC_FILE
                 fi
