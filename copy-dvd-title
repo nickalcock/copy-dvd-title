@@ -56,6 +56,7 @@ DVD_SYNTHDIR=
 DVD_SYNTH_TIMESTAMPS=t
 DVD_AUDIO_CODEC=opus
 DVD_SYNTH_GRAB=makemkv
+DVD_PREPROC=
 DVD_POSTPROC=
 DVD_DISPLAY_WIDTH=
 DVD_OVERWRITE=
@@ -129,8 +130,12 @@ parse_single()
         --no-makemkv) DVD_MAKEMKV=;;
         --makemkv-profile=*) DVD_MAKEMKV_PROFILE="$(parse_arg $1)";;
         --synth-grab=*) DVD_SYNTH_GRAB="$(parse_arg $1)";;
+        --preproc=*) DVD_PREPROC="$(parse_arg $1)";;
+        --preproc-args=*) DVD_PREPROC_ARGS="$(parse_arg $1 | tr ',' ' ')";;
+        --no-preproc) DVD_PREPROC=;;
         --postproc=*) DVD_POSTPROC="$(parse_arg $1)";;
         --postproc-args=*) DVD_POSTPROC_ARGS="$(parse_arg $1 | tr ',' ' ')";;
+        --no-postproc) DVD_POSTPROC=;;
         --save-temps) DVD_SAVE_TEMPS=t;;
         --wipe-pregrabbed) DVD_WIPE_PREGRABBED=t;;
         --no-wipe-pregrabbed) DVD_WIPE_PREGRABBED=;;
@@ -284,10 +289,23 @@ while read -ru 7 TRACK TITLE; do
         continue
     fi
 
-    # Alternate encoding for DVD chapters.
-    DVD_CHAPTER="$(echo $TRACK | cut -d: -sf2-)"
-    if [[ -n $DVD_CHAPTER ]]; then
-        TRACK="$(echo $TRACK | cut -d: -f1)"
+    # If concatenation is needed, we must be using makemkv or mkvdir to get
+    # access to the raw data.  (Just using synthing would work in theory, but
+    # this is not yet implemented.)
+    if printf %s "$TRACK" | grep -qF + && [[ -z $DVD_MKVDIR ]] &&
+            [[ -z $DVD_MAKEMKV ]]; then
+        echo "Error: track concatenation must use --mkvdir or --makemkv." >&2
+        exit 1
+    fi
+
+    # Alternate encoding for DVD chapters. This uses HandBrake's chapter
+    # machinery: if additions are needed, we use mkvextract/mkvmerge on the raw
+    # extracted content instead (see below).
+    if ! printf %s "$TRACK" | grep -qF +; then
+        DVD_CHAPTER="$(echo $TRACK | cut -d: -sf2-)"
+        if [[ -n $DVD_CHAPTER ]]; then
+            TRACK="$(echo $TRACK | cut -d: -f1)"
+        fi
     fi
 
     function
@@ -353,32 +371,84 @@ while read -ru 7 TRACK TITLE; do
         local ENC_FILE=
         local rm_enc_file=
         local i=0
+        # Problems at this stage lead to the silent loss of content.  Better to abort.
         if [[ -n $pregrabbed[$PREGRABBED_KEY] ]]; then
             ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
             unset DVD_SYNTH
         elif [[ -n $DVD_MKVDIR ]]; then
-            for subtrack in $(echo $TRACK | tr '+' ' '); do
+            for track in $(echo $TRACK | tr '+' ' '); do
+                subtrack="$(printf "$track" | sed 's,:.*$,,')"
                 if [[ $subtrack -lt 100 ]]; then
-                    ENC_FILE="$ENC_FILE${ENC_FILE:+ }$(echo $DVD_MKVDIR/*_t${(l:2::0:)subtrack}.mkv)"
+                    track_input="$(echo $DVD_MKVDIR/*_t${(l:2::0:)subtrack}.mkv)"
                 else
-                    ENC_FILE="$ENC_FILE${ENC_FILE:+ }$(echo $DVD_MKVDIR/*_t${subtrack}.mkv)"
+                    track_input="$(echo $DVD_MKVDIR/*_t${subtrack}.mkv)"
+                fi
+
+                if printf "$track" | grep -q ":"; then
+                    mkdir -p $TMPDIR/.chapters
+                    # Force a combine no matter what.
+                    i=$(($i+1))
+                    chapter="$(printf "$track" | sed 's,^.*:,,')"
+                    if [[ ! -d $TMPDIR/.chapters/$subtrack ]]; then
+                        mkdir $TMPDIR/.chapters/$subtrack
+                        mkvmerge --split chapters:all $track_input -o $TMPDIR/.chapters/$subtrack/%d.mkv
+                    fi
+                    if [[ ! -f $TMPDIR/.chapters/$subtrack/$chapter.mkv ]]; then
+                        printf "Track %i, chapter %i does not exist.\n" $subtrack $chapter >&2
+                        exit 1
+                    fi
+                    ENC_FILE="$ENC_FILE $TMPDIR/.chapters/$subtrack/$chapter.mkv"
+                else
+                    ENC_FILE="$ENC_FILE${ENC_FILE:+ }$track_input"
                 fi
                 i=$(($i+1))
             done
+            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
+                for file in ${=ENC_FILE}; do
+                    $DVD_PREPROC "$file" ${=DVD_PREPROC_ARGS}
+                done
+            fi
             if [[ $i -gt 1 ]]; then
-                TRACK="$(echo $TRACK | cut -d+ -f1)"
+                TRACK="$(echo $TRACK | cut -d+ -f1 | sed 's,:.*$,,')"
                 mkvmerge -o $TMPDIR/$TRACK.combined.mkv '[' ${=ENC_FILE} ']'
                 ENC_FILE=$TMPDIR/$TRACK.combined.mkv
+                rm -rf $TMPDIR/.chapters
             fi
         elif [[ -n $DVD_MAKEMKV ]]; then
             ENC_FILE=$TMPDIR/$TRACK.orig.mkv
             mkvsource="disc:$(makemkvdrive $DVD_DRIVE)"
-            mkdir -p $TMPDIR/.out $TMPDIR/.out.ordered
-            for subtrack in $(echo $TRACK | tr '+' ' '); do
-                makemkvcon mkv --minlength=$BLURAY_MINLENGTH ${DVD_MAKEMKV_PROFILE:+--profile=$DVD_MAKEMKV_PROFILE} $mkvsource $subtrack $TMPDIR/.out
-                mv $TMPDIR/.out/*.mkv $TMPDIR/.out.ordered/$i.mkv
-                i=$(($i+1))
+            mkdir -p $TMPDIR/.out $TMPDIR/.chapters $TMPDIR/.out.ordered
+            for subtrack in "$(echo "$TRACK" | tr '+' '\n' | sed 's,:.*$,,' | sort -u)"; do
+                mkdir $TMPDIR/.out/$subtrack
+                makemkvcon mkv --minlength=$BLURAY_MINLENGTH ${DVD_MAKEMKV_PROFILE:+--profile=$DVD_MAKEMKV_PROFILE} $mkvsource $subtrack $TMPDIR/.out/$subtrack
+                ls -l $TMPDIR/.out
             done
+            for track in "$(echo "$TRACK" | tr '+' '\n')"; do
+                if printf "$track" | grep -q ":"; then
+                    subtrack="$(printf "$track" | sed 's,:.*$,,')"
+                    if [[ ! -d $TMPDIR/.chapters/$subtrack ]]; then
+                        mkdir $TMPDIR/.chapters/$subtrack
+                        mkvmerge --split chapters:all $TMPDIR/.out/$subtrack -o $TMPDIR/.chapters/$subtrack/%d.mkv
+                    fi
+                fi
+            done
+            for track in "$(echo "$TRACK" | tr '+' '\n')"; do
+                if ! printf "$track" | grep -q ":"; then
+                    mv $TMPDIR/.out/$subtrack/*.mkv $TMPDIR/.out.ordered/$i.mkv
+                    i=$(($i+1))
+                else
+                    subtrack="$(printf "$track" | sed 's,:.*$,,')"
+                    chapter="$(printf "$track" | sed 's,^.*:,,')"
+                    mv $TMPDIR/.chapters/$subtrack/$chapter.mkv $TMPDIR/.out.ordered/$i.mkv
+                fi
+            done
+
+            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
+                for file in $TMPDIR/.out.ordered/*; do
+                    $DVD_PREPROC "$file" ${=DVD_PREPROC_ARGS}
+                done
+            fi
+
             if [[ $subtrack != $TRACK ]]; then
                 TRACK="$(echo $TRACK | cut -d+ -f1)"
                 mkvmerge -o $ENC_FILE '[' $TMPDIR/.out.ordered/* ']'
@@ -386,7 +456,7 @@ while read -ru 7 TRACK TITLE; do
             else
                 mv $TMPDIR/.out.ordered/*.mkv $ENC_FILE
             fi
-            rmdir $TMPDIR/.out $TMPDIR/.out.ordered
+            rm -r $TMPDIR/.out $TMPDIR/.out.ordered $TMPDIR/.chapters
             if [[ -z $DVD_SYNTH ]]; then
                 local target=makemkv.$$
                 mkdir -p $TMPDIR/$target
@@ -461,6 +531,12 @@ while read -ru 7 TRACK TITLE; do
                     rmdir $TMPDIR/.out
                 fi
                 ENC_FILE=$TMPDIR/$TRACK.orig.mkv
+
+                if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
+                    for file in "$ENC_FILE"; do
+                        $DVD_PREPROC "$file" ${=DVD_PREPROC_ARGS}
+                    done
+                fi
                 ENC_TITLE=
                 rm_encsynth_file=t
             fi
