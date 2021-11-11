@@ -22,7 +22,9 @@ ulimit -c 0
 
 DVD_OUTDIR=.
 DVD_SUBTITLES=
+DVD_SUBTITLES_DEFAULT=
 DVD_SUBTITLES_FORCED=
+DVD_SUBTITLE_LANG=
 DVD_QUALITY=19
 DVD_CHAPTER=
 DVD_ANGLE=
@@ -80,6 +82,9 @@ parse_single()
         --subtitles=*) DVD_SUBTITLES="$(parse_arg $1)";;
         --force-subtitles=*) DVD_SUBTITLES_FORCED="$(parse_arg $1)";;
         --default-subtitle=*) DVD_SUBTITLES_DEFAULT="$(parse_arg $1)";;
+        --no-default-subtitle=*) DVD_SUBTITLES_DEFAULT="";;
+        --subtitle-lang=*) DVD_SUBTITLE_LANG="$(parse_arg $1)";;
+        --no-subtitle-lang) DVD_SUBTITLE_LANG="";;
         --seasontitle=*) DVD_SEASONTITLE="$(parse_arg $1)";;
         --audio=*) DVD_AUDIO_TRACKS="$(parse_arg $1)";;
         --audio-codec=*) DVD_AUDIO_CODEC="$(parse_arg $1)";;
@@ -288,6 +293,7 @@ while read -ru 7 TRACK TITLE; do
         local DVD_OUTDIR=$DVD_OUTDIR DVD_SUBTITLES=$DVD_SUBTITLES
         local DVD_SUBTITLES_FORCED=$DVD_SUBTITLES_FORCED
         local DVD_SUBTITLES_DEFAULT=$DVD_SUBTITLES_DEFAULT
+        local DVD_SUBTITLE_LANG=$DVD_SUBTITLE_LANG
         local DVD_QUALITY=$DVD_QUALITY DVD_CHAPTER=$DVD_CHAPTER
         local DVD_ANGLE=$DVD_ANGLE DVD_AUDIO_TRACKS=$DVD_AUDIO_TRACKS
         local DVD_AUDIO_CODEC=$DVD_AUDIO_CODEC
@@ -512,8 +518,13 @@ while read -ru 7 TRACK TITLE; do
             fi
         fi
 
+        # Stop HandBrake transforming the default flag into a forced flag.
+        if [[ -n $DVD_SUBTITLES_DEFAULT ]] || [[ -z $DVD_SUBTITLES_FORCED ]]; then
+            HB_SUBTITLE_DEFAULT=none
+        fi
+
         # Encode!
-        if ! HandBrakeCLI --preset "Legacy/High Profile" ${=ENC_TITLE:+--title $TRACK} ${=DVD_CHAPTER:+--chapter $DVD_CHAPTER} ${=DVD_ANGLE:+--angle $DVD_ANGLE} ${=DVD_STARTSKIP:+--start-at seconds:$DVD_STARTSKIP} ${=DVD_STOPSKIP:+--stop-at seconds:$DVD_STOPSKIP} --format av_mkv --markers --no-align-av --encoder x264 --encoder-level 4.2 --encoder-preset $DVD_PRESET --encoder-tune $DVD_TUNE ${=DVD_CROP:+--crop $DVD_CROP} --previews 50 --quality $DVD_QUALITY ${=DVD_AUDIO_TRACKS:+--audio $DVD_AUDIO_TRACKS} --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} ${=DVD_DEINTERLACE} ${=DVD_DENOISE:+--hqdn3d=$DVD_DENOISE} ${=DVD_NLDENOISE:+--nlmeans=$DVD_NLDENOISE --nlmeans-tune=$DVD_TUNE} $DVD_DETELECINE --native-language eng --native-dub ${=DVD_SUBTITLES:+--subtitle $DVD_SUBTITLES} ${=DVD_SUBTITLES_FORCED:+--subtitle-forced=$DVD_SUBTITLES_FORCED} ${=DVD_SUBTITLES_DEFAULT:+--subtitle-default=$DVD_SUBTITLES_DEFAULT} --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.mkv; then
+        if ! HandBrakeCLI --preset "Legacy/High Profile" ${=ENC_TITLE:+--title $TRACK} ${=DVD_CHAPTER:+--chapter $DVD_CHAPTER} ${=DVD_ANGLE:+--angle $DVD_ANGLE} ${=DVD_STARTSKIP:+--start-at seconds:$DVD_STARTSKIP} ${=DVD_STOPSKIP:+--stop-at seconds:$DVD_STOPSKIP} --format av_mkv --markers --no-align-av --encoder x264 --encoder-level 4.2 --encoder-preset $DVD_PRESET --encoder-tune $DVD_TUNE ${=DVD_CROP:+--crop $DVD_CROP} --previews 50 --quality $DVD_QUALITY ${=DVD_AUDIO_TRACKS:+--audio $DVD_AUDIO_TRACKS} --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} ${=DVD_DEINTERLACE} ${=DVD_DENOISE:+--hqdn3d=$DVD_DENOISE} ${=DVD_NLDENOISE:+--nlmeans=$DVD_NLDENOISE --nlmeans-tune=$DVD_TUNE} $DVD_DETELECINE --native-language eng --native-dub ${=DVD_SUBTITLES:+--subtitle $DVD_SUBTITLES} ${=DVD_SUBTITLES_FORCED:+--subtitle-forced=$DVD_SUBTITLES_FORCED} ${=DVD_SUBTITLE_LANG:+--subtitle-lang-list $DVD_SUBTITLE_LANG --all-subtitles} ${HB_SUBTITLE_DEFAULT:+--subtitle-default=$HB_SUBTITLE_DEFAULT} --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.mkv; then
             echo "Encoding error, exitcode $?" >&2
             echo "Files left in $TMPDIR." >&2
             exit 1
@@ -551,9 +562,13 @@ while read -ru 7 TRACK TITLE; do
 </Tags>
 EOF
 
-        WRITE_TRACK=$(($WRITE_TRACK+1))
-        finalname="$DVD_OUTDIR/$(printf %02i $(($WRITE_TRACK+$TRACK_OFFSET)))-$(echo "$TITLE" | tr ' ' '-').mkv"
-        /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS --no-chapters} $TMPDIR/$TRACK.mkv -o $finalname
+        # Transform the default subtitle from an input subtitle ID into a mkvmerge ID, if one
+        # was specified.
+        if [[ -n $DVD_SUBTITLES_DEFAULT ]]; then
+            DVD_SUBTITLES_DEFAULT="$(mkvmerge --identification-format json --identify $TMPDIR/$TRACK.mkv | jq '.tracks | .[] | select(.type == "subtitles") | .id' | sed -n "${DVD_SUBTITLES_DEFAULT}p")"
+        fi
+
+        /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS --no-chapters} ${=DVD_SUBTITLES_DEFAULT:+--default-track $DVD_SUBTITLES_DEFAULT} $TMPDIR/$TRACK.mkv -o $finalname
 
         # Run any optional postprocessing requested, passing in the original file
         # (if file-sourced) and any further args.
