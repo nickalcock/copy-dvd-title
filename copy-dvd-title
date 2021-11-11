@@ -575,7 +575,7 @@ while read -ru 7 TRACK TITLE; do
                     unmux=$ENC_FILE
                 fi
                 local SAR="$(ffprobe -show_streams $unmux 2>&1 | grep sample_aspect_ratio | cut -d= -f2- | tr : /)"
-                PYTHONPATH=~/libexec/vapoursynth vspipe $DVD_SYNTH --arg source=$unmux --timecodes $TMPDIR/$TRACK-timecodes.txt --y4m - | \
+                PYTHONPATH=~/libexec/vapoursynth vspipe $DVD_SYNTH --arg source=$unmux --timecodes $TMPDIR/$TRACK-timecodes.txt -c y4m - | \
                     ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
                 mkdir -p $synthdir
                 sync
