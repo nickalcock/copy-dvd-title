@@ -94,7 +94,7 @@ parse_single()
         --date=*) DVD_DATE="$(parse_arg $1)";;
         --genre=*) DVD_GENRE="$(parse_arg $1)";;
         --vob=*) DVD_VOB="$(parse_arg $1)";;
-        --deinterlace) DVD_DEINTERLACE="--deinterlace=slower";;
+        --deinterlace) DVD_DEINTERLACE="--deinterlace=slower --no-comb-detect";;
         --decomb) DVD_DEINTERLACE="--decomb --comb-detect";;
         --deinterlace=*) DVD_DEINTERLACE="--deinterlace=$(parse_arg $1)";;
         --decomb=*) DVD_DEINTERLACE="--decomb=$(parse_arg $1) --comb-detect";;
