@@ -305,7 +305,7 @@ while read -ru 7 TRACK TITLE; do
     # Alternate encoding for DVD chapters. This uses HandBrake's chapter
     # machinery: if additions are needed, we use mkvextract/mkvmerge on the raw
     # extracted content instead (see below).
-    if ! printf %s "$TRACK" | grep -qF +; then
+    if ! printf %s "$TRACK" | grep -qF + && printf %s "$TRACK" | grep -qF -; then
         DVD_CHAPTER="$(echo $TRACK | cut -d: -sf2-)"
         if [[ -n $DVD_CHAPTER ]]; then
             TRACK="$(echo $TRACK | cut -d: -f1)"
