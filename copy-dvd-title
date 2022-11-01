@@ -608,19 +608,16 @@ while read -ru 7 TRACK TITLE; do
                 ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
                 rm_enc_file=
             fi
-        fi
 
-        # If this is a file, not a DVD or BluRay, we have to map the chapters
-        # across ourselves, including fixing up their timings if a startskip
-        # was specified. XXX perhaps use mkvmerge chapter timing adjustment?
-        CHAPTERS=
-        if [[ -n $ENC_FILE ]]; then
-            CHAPTERS=$TMPDIR/$TRACK-chapters.xml
-            mkvextract $ENC_FILE chapters $CHAPTERS.unadjusted
-    	    if [[ -s $CHAPTERS.unadjusted ]]; then
-                ~/libexec/copy-dvd-mangle-chapters ${DVD_STARTSKIP:-0} < $CHAPTERS.unadjusted > $CHAPTERS
-            else
-                CHAPTERS=
+            # If this is a file, not a DVD or BluRay, we have to map the chapters
+            # across ourselves.
+            CHAPTERS=
+            if [[ -n $ENC_FILE ]]; then
+                CHAPTERS=$TMPDIR/$TRACK-chapters.xml
+                mkvextract $ENC_FILE chapters $CHAPTERS
+    	        if [[ ! -s $CHAPTERS ]]; then
+                    CHAPTERS=
+                fi
             fi
         fi
 
@@ -674,7 +671,13 @@ EOF
             DVD_SUBTITLES_DEFAULT="$(mkvmerge --identification-format json --identify $TMPDIR/$TRACK.mkv | jq '.tracks | .[] | select(.type == "subtitles") | .id' | sed -n "${DVD_SUBTITLES_DEFAULT}p")"
         fi
 
-        /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS --no-chapters} ${=DVD_SUBTITLES_DEFAULT:+--default-track $DVD_SUBTITLES_DEFAULT} $TMPDIR/$TRACK.mkv -o $finalname
+        # Workaround a zsh parsing bug
+        if [[ -z $DVD_STARTSKIP ]]; then
+            cs=
+        else
+            cs="--chapter-sync -$(($DVD_STARTSKIP*1000))"
+        fi
+        /usr/bin/mkvmerge --global-tags $TMPDIR/mkvtags.xml ${=CHAPTERS:+--chapters $CHAPTERS $cs --no-chapters} ${=DVD_SUBTITLES_DEFAULT:+--default-track $DVD_SUBTITLES_DEFAULT} $TMPDIR/$TRACK.mkv -o $finalname
 
         # Run any optional postprocessing requested, passing in the original file
         # (if file-sourced) and any further args.
