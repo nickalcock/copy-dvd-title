@@ -52,6 +52,8 @@ DVD_DENOISE=
 DVD_NLDENOISE=
 DVD_DETELECINE=
 DVD_SYNTH=
+DVD_SYNTH_TOOL=vapoursynth
+DVD_SYNTH_SOURCE=
 DVD_SYNTHDIR=
 DVD_SYNTH_TIMESTAMPS=t
 DVD_AUDIO_CODEC=opus
@@ -121,7 +123,9 @@ parse_single()
         --hdd=*) DVD_HDD="$(parse_arg $1)";;
         --synth=*) DVD_SYNTH="$(parse_arg $1)";;
         --no-synth) DVD_SYNTH=;;
+        --synth-tool=*) DVD_SYNTH_TOOL="$(parse_arg $1)";;
         --synthdir=*) DVD_SYNTHDIR="$(parse_arg $1)";;
+        --synth-source=*) DVD_SYNTH_SOURCE="$(parse_arg $1)";;
         --display-width=*) DVD_DISPLAY_WIDTH="$(parse_arg $1)";;
         --overwrite) DVD_OVERWRITE=t;;
         --mkvdir=*) DVD_MKVDIR="$(parse_arg $1)";;
@@ -328,6 +332,7 @@ while read -ru 7 TRACK TITLE; do
         local DVD_CATALOGUE=$DVD_CATALOGUE DVD_DEINTERLACE=$DVD_DEINTERLACE
         local DVD_DENOISE=$DVD_DENOISE DVD_NLDENOISE=$DVD_NLDENOISE
         local DVD_DETELECINE=$DVD_DETELECINE DVD_SYNTH=$DVD_SYNTH
+        local DVD_SYNTH_TOOL=$DVD_SYNTH_TOOL DVD_SYNTH_SOURCE=$DVD_SYNTH_SOURCE
         local DVD_DISPLAY_WIDTH=$DVD_DISPLAY_WIDTH DVD_SYNTH_GRAB=$DVD_SYNTH_GRAB
         local DVD_OVERWRITE=$DVD_OVERWRITE DVD_MKVDIR=$DVD_MKVDIR
         local DVD_MAKEMKV=$DVD_MAKEMKV DVD_MAKEMKV_PROFILE=$DVD_MAKEMKV_PROFILE
@@ -480,7 +485,7 @@ while read -ru 7 TRACK TITLE; do
             anamorphic=--custom-anamorphic
         fi
 
-        # Transformation with vapoursynth.
+        # Transformation with vapoursynth or avisynth.
         #
         # This process produces an insane amount of data, so we sync after each
         # major data-producing stage, to prevent dirty-data flushes during the
@@ -555,10 +560,10 @@ while read -ru 7 TRACK TITLE; do
                     rm_enc_file=
                 fi
             else
-                # Extract the video track, run through vapoursynth, and immediately
-                # recompress with lossless x264 in fastest mode, before recombining
-                # again. (This reduces the disk space consumption hugely. It actually
-                # saves time because the disk write volume is reduced so much.)
+                # Extract the video track, run through vapoursynth or avisynth or both,
+                # and immediately recompress with lossless x264 in fastest mode, before
+                # recombining again. (This reduces the disk space consumption hugely.
+                # It actually saves time because the disk write volume is reduced so much.)
                 # Additionally, extract the chapter metadata in a form FFmpeg can
                 # understand, then mux it back into the output stream and ensure that
                 # all chapters have a keyframe at their start, for per-chapter
@@ -575,11 +580,22 @@ while read -ru 7 TRACK TITLE; do
                     unmux=$ENC_FILE
                 fi
                 local SAR="$(ffprobe -show_streams $unmux 2>&1 | grep sample_aspect_ratio | cut -d= -f2- | tr : /)"
-                PYTHONPATH=~/libexec/vapoursynth vspipe $DVD_SYNTH --arg source=$unmux --timecodes $TMPDIR/$TRACK-timecodes.txt -c y4m - | \
-                    ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
+                timecodes=
+                if [[ $SYNTH_TOOL = vapoursynth ]]; then
+                    timecodes=$TMPDIR/$TRACK-timecodes.txt
+                    PYTHONPATH=~/libexec/vapoursynth vspipe $DVD_SYNTH --arg source=$unmux --timecodes $timecodes -c y4m - | \
+                        ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
+                else
+                    [[ -n $DVD_SYNTH_SOURCE ]] && { rm -f $DVD_SYNTH_SOURCE; ln -sr $unmux $DVD_SYNTH_SOURCE; }
+                    fps="$(ffprobe $ENC_FILE 2>&1 | grep Video | grep -o '[0-9.]* fps' | sed 's, fps,,')"
+                    avs2yuv $DVD_SYNTH ${=DVD_STOPSKIP:+-frames $((DVD_STOPSKIP*fps))} -o - | \
+                        ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
+                    rm -f /tmp/.avisynth.tmp.ffindex
+                    [[ -n $DVD_SYNTH_SOURCE ]] && rm -f $DVD_SYNTH_SOURCE
+                fi
                 mkdir -p $synthdir
                 sync
-                mkvmerge -o $synthdir/$TRACK.mkv --no-chapters --timestamps 0:$TMPDIR/$TRACK-timecodes.txt $TMPDIR/$TRACK-unmuxed.mkv \
+                mkvmerge -o $synthdir/$TRACK.mkv --no-chapters ${TIMECODES:+--timestamps 0:$timecodes} $TMPDIR/$TRACK-unmuxed.mkv \
                          $(if [[ $mkv_delay -ne 0 ]]; then \
                                for trackid in $(mkvmerge --identify $ENC_FILE | grep audio | awk '{ print $3;}' | tr -d :); do \
                                    echo -y $trackid:$mkv_delay; \
