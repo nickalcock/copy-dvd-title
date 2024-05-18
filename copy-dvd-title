@@ -83,8 +83,8 @@ parse_single()
             [[ ! -f $DVD_CATALOGUE ]] && { echo "Catalogue file $DVD_CATALOGUE not found." >&2; exit 1; };;
         --output=*) DVD_OUTDIR="$(parse_arg $1)"
             [[ ! -d $DVD_OUTDIR ]] && { echo "Output directory $DVD_OUTDIR not found." >&2; exit 1; };;
-        --subtitles=*) DVD_SUBTITLES="$(parse_arg $1)";;
-        --force-subtitles=*) DVD_SUBTITLES_FORCED="$(parse_arg $1)";;
+        --subtitles=*|--subtitle=*) DVD_SUBTITLES="$(parse_arg $1)";;
+        --force-subtitles=*|--force-subtitle=*) DVD_SUBTITLES_FORCED="$(parse_arg $1)";;
         --default-subtitle=*) DVD_SUBTITLES_DEFAULT="$(parse_arg $1)";;
         --no-default-subtitle=*) DVD_SUBTITLES_DEFAULT="";;
         --subtitle-lang=*) DVD_SUBTITLE_LANG="$(parse_arg $1)";;
