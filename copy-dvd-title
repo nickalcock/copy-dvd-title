@@ -522,7 +522,7 @@ while read -ru 7 TRACK TITLE; do
                         vlc_uri="dvd://$ENCDRIVE"
                     fi
                     vlcize $vlc_uri $ENC_TITLE $TMPDIR/$TRACK.orig.mpg || exit 1
-                    sync
+                    sync $$TMPDIR/$TRACK.orig.mpg
                     mkvmerge -o $TMPDIR/$TRACK.orig.mkv $TMPDIR/$TRACK.orig.mpg
                     mkv_delay=500 # genuine guess
                     rm -f $TMPDIR/$TRACK.orig.mpg
@@ -577,7 +577,7 @@ while read -ru 7 TRACK TITLE; do
                 # transcoding.  We can also edit the chapter information to adapt to
                 # situations where the chapters are skewed or otherwise invalid: in
                 # this case, we must mux in the edited chapters, not the originals.
-                sync
+                sync $TMPDIR
                 ffmpeg -loglevel fatal -i $ENC_FILE -f ffmetadata $TMPDIR/$TRACK.ffmetadata
                 if [[ -n $unmux ]]; then
                     if ! ln $ENC_FILE $unmux; then
@@ -599,7 +599,7 @@ while read -ru 7 TRACK TITLE; do
                         ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
                 fi
                 mkdir -p $synthdir
-                sync
+                sync $TMPDIR
                 mkvmerge -o $synthdir/$TRACK.mkv --no-chapters ${TIMECODES:+--timestamps 0:$timecodes} $TMPDIR/$TRACK-unmuxed.mkv \
                          $(if [[ $mkv_delay -ne 0 ]]; then \
                                for trackid in $(mkvmerge --identify $ENC_FILE | grep audio | awk '{ print $3;}' | tr -d :); do \
