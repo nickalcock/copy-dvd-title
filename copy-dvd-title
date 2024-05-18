@@ -506,7 +506,7 @@ while read -ru 7 TRACK TITLE; do
                     if [[ -n $DVD_WIPE_PREGRABBED ]]; then
                         synth_chapter=$DVD_CHAPTER
                     fi
-                    if ! HandBrakeCLI --preset Legacy/Normal --encoder-profile auto ${=ENC_TITLE:+--title $TRACK} ${=synth_chapter:+--chapter $synth_chapter} --format av_mkv --markers --encoder x264 --encoder-level 4.2 --encoder-preset ultrafast --encoder-tune $DVD_TUNE --quality 0 --crop 0:0:0:0 --all-audio --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} --native-language eng --native-dub --all-subtitles --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.orig.mkv; then
+                    if ! HandBrakeCLI --preset Legacy/Normal --encoder-profile auto ${=ENC_TITLE:+--title $TRACK} ${=synth_chapter:+--chapter $synth_chapter} --format av_mkv --markers --encoder x264 --encoder-level 4.2 --encoder-preset ultrafast --encoder-tune $DVD_TUNE --quality 0 --crop-mode none --all-audio --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} --native-language eng --native-dub --all-subtitles --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.orig.mkv; then
                         echo "Encoding error, exitcode $?" >&2
                         echo "Files left in $TMPDIR." >&2
                         exit 1
