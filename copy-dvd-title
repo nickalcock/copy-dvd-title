@@ -710,3 +710,5 @@ if [[ -z $DVD_SAVE_TEMPS ]]; then
     rm -rf $TMPDIR
     [[ -d $synthdir ]] && rm -rf $synthdir
 fi
+
+exit 0
