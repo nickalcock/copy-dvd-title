@@ -53,7 +53,6 @@ DVD_NLDENOISE=
 DVD_DETELECINE=
 DVD_SYNTH=
 DVD_SYNTH_TOOL=vapoursynth
-DVD_SYNTH_SOURCE=
 DVD_SYNTHDIR=
 DVD_SYNTH_TIMESTAMPS=t
 DVD_AUDIO_CODEC=opus
@@ -125,7 +124,6 @@ parse_single()
         --no-synth) DVD_SYNTH=;;
         --synth-tool=*) DVD_SYNTH_TOOL="$(parse_arg $1)";;
         --synthdir=*) DVD_SYNTHDIR="$(parse_arg $1)";;
-        --synth-source=*) DVD_SYNTH_SOURCE="$(parse_arg $1)";;
         --display-width=*) DVD_DISPLAY_WIDTH="$(parse_arg $1)";;
         --overwrite) DVD_OVERWRITE=t;;
         --mkvdir=*) DVD_MKVDIR="$(parse_arg $1)";;
@@ -332,7 +330,7 @@ while read -ru 7 TRACK TITLE; do
         local DVD_CATALOGUE=$DVD_CATALOGUE DVD_DEINTERLACE=$DVD_DEINTERLACE
         local DVD_DENOISE=$DVD_DENOISE DVD_NLDENOISE=$DVD_NLDENOISE
         local DVD_DETELECINE=$DVD_DETELECINE DVD_SYNTH=$DVD_SYNTH
-        local DVD_SYNTH_TOOL=$DVD_SYNTH_TOOL DVD_SYNTH_SOURCE=$DVD_SYNTH_SOURCE
+        local DVD_SYNTH_TOOL=$DVD_SYNTH_TOOL
         local DVD_DISPLAY_WIDTH=$DVD_DISPLAY_WIDTH DVD_SYNTH_GRAB=$DVD_SYNTH_GRAB
         local DVD_OVERWRITE=$DVD_OVERWRITE DVD_MKVDIR=$DVD_MKVDIR
         local DVD_MAKEMKV=$DVD_MAKEMKV DVD_MAKEMKV_PROFILE=$DVD_MAKEMKV_PROFILE
@@ -586,12 +584,10 @@ while read -ru 7 TRACK TITLE; do
                     PYTHONPATH=~/libexec/vapoursynth vspipe $DVD_SYNTH --arg source=$unmux --timecodes $timecodes -c y4m - | \
                         ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
                 else
-                    [[ -n $DVD_SYNTH_SOURCE ]] && { rm -f $DVD_SYNTH_SOURCE; ln -sr $unmux $DVD_SYNTH_SOURCE; }
+                    sed 's:@source@:'$unmux':g' < $DVD_SYNTH > $TMPDIR/$TRACK.avs
                     fps="$(ffprobe $ENC_FILE 2>&1 | grep Video | grep -o '[0-9.]* fps' | sed 's, fps,,')"
                     avs2yuv $DVD_SYNTH ${=DVD_STOPSKIP:+-frames $((DVD_STOPSKIP*fps))} -o - | \
                         ffmpeg -i - -i $TMPDIR/$TRACK.ffmetadata -map 0 -map_metadata 1 -c:v libx264 -preset ultrafast -qp 0 ${=SAR:+-filter setsar=sar=$SAR} -force_key_frames chapters $TMPDIR/$TRACK-unmuxed.mkv
-                    rm -f /tmp/.avisynth.tmp.ffindex
-                    [[ -n $DVD_SYNTH_SOURCE ]] && rm -f $DVD_SYNTH_SOURCE
                 fi
                 mkdir -p $synthdir
                 sync
