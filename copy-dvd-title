@@ -112,6 +112,7 @@ parse_single()
         --preset=*) DVD_PRESET="$(parse_arg $1)";;
         --media=*) DVD_TUNE="$(parse_arg $1)";;
         --crop=*) DVD_CROP="$(parse_arg $1)";;
+        --no-crop) DVD_NOCROP=t;;
         --skip=*) DVD_STARTSKIP="$(parse_arg $1)";;
         --stop=*) DVD_STOPSKIP="$(parse_arg $1)";;
         --previews=*) DVD_PREVIEWS="$(parse_arg $1)";;
@@ -324,7 +325,7 @@ while read -ru 7 TRACK TITLE; do
         local DVD_SEASONTITLE=$DVD_SEASONTITLE DVD_DATE=$DVD_DATE
         local DVD_GENRE=$DVD_GENRE DVD_DRIVE=$DVD_DRIVE DVD_HDD=$DVD_HDD
         local DVD_MOUNTPOINT=$DVD_MOUNTPOINT DVD_PREVIEWS=$DVD_PREVIEWS
-        local DVD_PRESET=$DVD_PRESET DVD_TUNE=$DVD_TUNE DVD_CROP=$DVD_CROP
+        local DVD_PRESET=$DVD_PRESET DVD_TUNE=$DVD_TUNE DVD_CROP=$DVD_CROP DVD_NOCROP=$DVD_NOCROP
         local DVD_SAVE_TEMPS=$DVD_SAVE_TEMPS DVD_STARTSKIP=$DVD_STARTSKIP
         local DVD_STOPSKIP=$DVD_STOPSKIP BLURAY_MINLENGTH=$BLURAY_MINLENGTH
         local DVD_CATALOGUE=$DVD_CATALOGUE DVD_DEINTERLACE=$DVD_DEINTERLACE
@@ -623,11 +624,17 @@ while read -ru 7 TRACK TITLE; do
         fi
 
         # Encode!
-        if ! HandBrakeCLI --preset "Legacy/High Profile" ${=ENC_TITLE:+--title $TRACK} ${=DVD_CHAPTER:+--chapter $DVD_CHAPTER} ${=DVD_ANGLE:+--angle $DVD_ANGLE} ${=DVD_STARTSKIP:+--start-at seconds:$DVD_STARTSKIP} ${=DVD_STOPSKIP:+--stop-at seconds:$DVD_STOPSKIP} --format av_mkv --markers --no-align-av --encoder x264 --encoder-level 4.2 --encoder-preset $DVD_PRESET --encoder-tune $DVD_TUNE ${=DVD_CROP:+--crop $DVD_CROP} --previews ${DVD_PREVIEWS} --quality $DVD_QUALITY ${=DVD_AUDIO_TRACKS:+--audio $DVD_AUDIO_TRACKS} --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} ${=DVD_DEINTERLACE} ${=DVD_DENOISE:+--hqdn3d=$DVD_DENOISE} ${=DVD_NLDENOISE:+--nlmeans=$DVD_NLDENOISE --nlmeans-tune=$DVD_TUNE} $DVD_DETELECINE --native-language eng --native-dub ${=DVD_SUBTITLES:+--subtitle $DVD_SUBTITLES} ${=DVD_SUBTITLES_FORCED:+--subtitle-forced=$DVD_SUBTITLES_FORCED} ${=DVD_SUBTITLE_LANG:+--subtitle-lang-list $DVD_SUBTITLE_LANG --all-subtitles} ${HB_SUBTITLE_DEFAULT:+--subtitle-default=$HB_SUBTITLE_DEFAULT} --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.mkv; then
-            echo "Encoding error, exitcode $?" >&2
+        TASK="$(pueue add --label "Transcoding $finalname" --group handbrake --print-task-id --escape -- lazy-handbrake --preset "Legacy/High Profile" ${=ENC_TITLE:+--title $TRACK} ${=DVD_CHAPTER:+--chapter $DVD_CHAPTER} ${=DVD_ANGLE:+--angle $DVD_ANGLE} ${=DVD_STARTSKIP:+--start-at seconds:$DVD_STARTSKIP} ${=DVD_STOPSKIP:+--stop-at seconds:$DVD_STOPSKIP} --format av_mkv --markers --no-align-av --encoder x264 --encoder-level 4.2 --encoder-preset $DVD_PRESET --encoder-tune $DVD_TUNE ${=DVD_CROP:+--crop $DVD_CROP} ${=DVD_NOCROP:+--crop-mode none} --previews ${DVD_PREVIEWS} --quality $DVD_QUALITY ${=DVD_AUDIO_TRACKS:+--audio $DVD_AUDIO_TRACKS} --aencoder $DVD_AUDIO_CODEC $anamorphic ${=DVD_DISPLAY_WIDTH:+--display-width=$DVD_DISPLAY_WIDTH} ${=DVD_DEINTERLACE} ${=DVD_DENOISE:+--hqdn3d=$DVD_DENOISE} ${=DVD_NLDENOISE:+--nlmeans=$DVD_NLDENOISE --nlmeans-tune=$DVD_TUNE} $DVD_DETELECINE --native-language eng --native-dub ${=DVD_SUBTITLES:+--subtitle $DVD_SUBTITLES} ${=DVD_SUBTITLES_FORCED:+--subtitle-forced=$DVD_SUBTITLES_FORCED} ${=DVD_SUBTITLE_LANG:+--subtitle-lang-list $DVD_SUBTITLE_LANG --all-subtitles} ${HB_SUBTITLE_DEFAULT:+--subtitle-default=$HB_SUBTITLE_DEFAULT} --input ${ENC_TITLE:+$ENCDRIVE}$ENC_FILE --output $TMPDIR/$TRACK.mkv || touch $TMPDIR/$TRACK.fail)"
+
+        pueue wait --status running $TASK
+        pueue follow $TASK
+
+	if [[ -e $TMPDIR/$TRACK.fail ]]; then
+            echo "Encoding error." >&2
             echo "Files left in $TMPDIR." >&2
             exit 1
         fi
+
         # Merge in the season title, release date, and genre into the final Matroska file.
 
         cat > $TMPDIR/mkvtags.xml <<EOF
