@@ -58,6 +58,7 @@ DVD_SYNTH_TIMESTAMPS=t
 DVD_AUDIO_CODEC=opus
 DVD_SYNTH_GRAB=makemkv
 DVD_PREPROC=
+DVD_PREPROC_AFTER_SYNTH=
 DVD_POSTPROC=
 DVD_DISPLAY_WIDTH=
 DVD_OVERWRITE=
@@ -136,6 +137,7 @@ parse_single()
         --preproc=*) DVD_PREPROC="$(parse_arg $1)";;
         --preproc-args=*) DVD_PREPROC_ARGS="$(parse_arg $1 | tr ',' ' ')";;
         --no-preproc) DVD_PREPROC=;;
+	--preproc-after-synth) DVD_PREPROC_AFTER_SYNTH=t;;
         --postproc=*) DVD_POSTPROC="$(parse_arg $1)";;
         --postproc-args=*) DVD_POSTPROC_ARGS="$(parse_arg $1 | tr ',' ' ')";;
         --no-postproc) DVD_POSTPROC=;;
@@ -337,6 +339,7 @@ while read -ru 7 TRACK TITLE; do
         local DVD_MAKEMKV=$DVD_MAKEMKV DVD_MAKEMKV_PROFILE=$DVD_MAKEMKV_PROFILE
         local DVD_POSTPROC=$DVD_POSTPROC DVD_POSTPROC_ARGS="$DVD_POSTPROC_ARGS"
         local DVD_PREPROC=$DVD_PREPROC DVD_PREPROC_ARGS="$DVD_PREPROC_ARGS"
+        local DVD_PREPROC_AFTER_SYNTH=$DVD_PREPROC_AFTER_SYNTH
         local DVD_WIPE_PREGRABBED=$DVD_WIPE_PREGRABBED
 
         if [[ $TITLE =~ :: ]]; then
@@ -407,7 +410,7 @@ while read -ru 7 TRACK TITLE; do
                 fi
                 i=$(($i+1))
             done
-            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
+            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]] && [[ ! -n $DVD_PREPROC_AFTER_SYNTH ]]; then
                 for file in ${=ENC_FILE}; do
                     $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
                 done
@@ -447,7 +450,7 @@ while read -ru 7 TRACK TITLE; do
                 fi
             done
 
-            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
+            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]] && [[ ! -n $DVD_PREPROC_AFTER_SYNTH ]]; then
                 for file in $TMPDIR/.out.ordered/*; do
                     $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
                 done
@@ -536,7 +539,7 @@ while read -ru 7 TRACK TITLE; do
                 fi
                 ENC_FILE=$TMPDIR/$TRACK.orig.mkv
 
-                if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
+                if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]] && [[ ! -n $DVD_PREPROC_AFTER_SYNTH ]]; then
                     for file in "$ENC_FILE"; do
                         $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
                     done
@@ -557,6 +560,11 @@ while read -ru 7 TRACK TITLE; do
                     pregrabbed[$PREGRABBED_KEY]=$synthdir/$TRACK.mkv
                     ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
                     rm_enc_file=
+                fi
+                if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]] && [[ ! -n $DVD_PREPROC_AFTER_SYNTH ]]; then
+                    for file in "$ENC_FILE"; do
+                        $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
+                    done
                 fi
             else
                 # Extract the video track, run through vapoursynth or avisynth or both,
@@ -604,6 +612,12 @@ while read -ru 7 TRACK TITLE; do
                 pregrabbed[$PREGRABBED_KEY]=$synthdir/$TRACK.mkv
                 ENC_FILE=$pregrabbed[$PREGRABBED_KEY]
                 rm_enc_file=
+            fi
+
+            if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]] && [[ -n $DVD_PREPROC_AFTER_SYNTH ]]; then
+                for file in "$ENC_FILE"; do
+                    $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
+                done
             fi
 
             # If this is a file, not a DVD or BluRay, we have to map the chapters
