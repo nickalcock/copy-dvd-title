@@ -409,7 +409,7 @@ while read -ru 7 TRACK TITLE; do
             done
             if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
                 for file in ${=ENC_FILE}; do
-                    $DVD_PREPROC "$file" ${=DVD_PREPROC_ARGS}
+                    $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
                 done
             fi
             if [[ $i -gt 1 ]]; then
@@ -449,7 +449,7 @@ while read -ru 7 TRACK TITLE; do
 
             if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
                 for file in $TMPDIR/.out.ordered/*; do
-                    $DVD_PREPROC "$file" ${=DVD_PREPROC_ARGS}
+                    $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
                 done
             fi
 
@@ -538,7 +538,7 @@ while read -ru 7 TRACK TITLE; do
 
                 if [[ -n $DVD_PREPROC ]] && [[ -x $DVD_PREPROC ]]; then
                     for file in "$ENC_FILE"; do
-                        $DVD_PREPROC "$file" ${=DVD_PREPROC_ARGS}
+                        $DVD_PREPROC "$file" "$finalname" ${=DVD_PREPROC_ARGS}
                     done
                 fi
                 ENC_TITLE=
