@@ -86,7 +86,7 @@ parse_single()
         --subtitles=*|--subtitle=*) DVD_SUBTITLES="$(parse_arg $1)";;
         --force-subtitles=*|--force-subtitle=*) DVD_SUBTITLES_FORCED="$(parse_arg $1)";;
         --default-subtitle=*) DVD_SUBTITLES_DEFAULT="$(parse_arg $1)";;
-        --no-default-subtitle=*) DVD_SUBTITLES_DEFAULT="";;
+        --no-default-subtitle) DVD_SUBTITLES_DEFAULT="";;
         --subtitle-lang=*) DVD_SUBTITLE_LANG="$(parse_arg $1)";;
         --no-subtitle-lang) DVD_SUBTITLE_LANG="";;
         --seasontitle=*) DVD_SEASONTITLE="$(parse_arg $1)";;
